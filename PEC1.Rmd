@@ -1,0 +1,548 @@
+---
+title: PEC1. Anàlisis de dades d'expressió dels queratinocits procedens d'un condiloma
+  acuminata i de teixit de pell normal
+author: "Laia Giralt"
+date: "9/4/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## 1. Abstract
+El condiloma acuminata (CA) és una malaltia de transmisió sexual on el virus del papil·loma humà (VPH) infecta els queratinòcits. En aquest estudi es compara l'expressió gènica d'un perfil d'expressió de mRNA i lncRNA dels queratinocits de pell normal i de pacients amb CA. El perfil d'expressió es realitza amb  Affymetrix Human Transcriptome Array 2.0 i l'analisi de dades és de forma bioinformàtica. S'observa un enriquiment de vies relacionades amb la mitosi i amb les figres elàstiques. Es determina que els gens amb una expressió més diferencial són el FNDC1, NOVA1, IGFL1 i EPGN.
+
+## 2. Objectius
+
+- Comparar l'expressió gènica dels queratinòcits de pell normal i els de pacients amb CA
+- Identificar gens diferencialment expresats en queratinòcits dels dos grups
+- Analitzar la significació biològica dels resultats
+
+
+## 3. Introducció
+
+El condiloma acuminata (CA) és una malaltia de transmisió sexual on el virus del papil·loma humà (VPH) infecta els queratinòcits. Un dels símptomes d'aquesta infecció són unes berrugues que, majoritariament es defineixen com a proliferacions benignes dels queratinòcits.
+
+En general, el 90% de les persones amb aquest virus resolen espontàniament la infecció i per tant es pot dir que té un pronòstic bo. Ara bé, hi ha un petit percentatge de pacients on la malaltia pot recidivar o evolucionat cap a lesions neoplàsiques. 
+
+Hi ha diferents factors que influeixen en aquesta evolució, però un d'ells és el subtipus de virus que ha infectat al pacient, per exemple el tipus 6 i 11 de VPH són els responsables del 90% dels casos de berrugues.
+
+
+
+## 4. Materials i mètodes
+
+Aquest estudi s'ha aplicat al dataset publicat per Gu Z, Zhang H, Cao Y (2020). Les dades estan penjades a Gene Expression Omnbus (GEO) sota la identificació **GSE140662**.
+
+Les dades d'aquest estudi es van obtenir d'un **experiment de perfil d'expressió per array**. Concretament es van recollir mostres de teixit de queratinòcits de prepuci sa de 3 humans donants i de berrugues al prepuci de 5 pacients amb CA. Per tant tenim un experiment de 8 mostres repartides amb dos grups: queratinòcits de prepuci sa (control) i queratinòcits de berrugues de pacients amb CA.
+
+Els pacients es van seleccionar tenint en compte que fossin positius per DNA de VPH de tipus 6 o 11 i negatius per la resta de subtipus de VPH.
+
+Per obtenir el perfil d'expressió és va utilizar *l'array HTA-2_0,  Affymetrix Human Transcriptome Array 2.0*
+
+Per l'anàlisi bioinformàtic s'han seguit el document Statistical Analysis of Microarray data (adapted for teaching purposes) d'en Gonzalo, Ricardo i Danchez-Pla, Alex (Març 2020). A continuació detellem els passos fets i podem trobar el repositori a https://github.com/lgiralt94/PECdades.git
+
+### 4.1. Preparació de les dades
+
+Per poder realitzar l'estudi ens hem descarregat els arxius *.CEL* de les diferents mostre. A continuació vam crear un nou arxiu anomenat *targets* on lligavem el nom de l'arxiu .CEL amb el grup que partanyia la mostra. Aquest arxiu es va crear amb un Excel i es va importar a Rstudio amb el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+library(readr)
+targets = read_delim("./targets.csv",
+";", escape_double = FALSE, trim_ws = TRUE)
+```
+
+A continuació es van importar els arxius CEL i es van relacionar amb l'arxiu *targets* amb el codi que hi ha a continuació. A més a més l'última ordre ens serveix per canviar el nom llarg de les mostres per l'etiqueta curta que hem creat nosaltres a l'arxiu *targets*.
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+library(oligo)
+library(Biobase)
+library(pd.hta.2.0)
+library(RSQLite)
+library(DBI)
+
+celFiles = oligoClasses::list.celfiles("./data", full.names = TRUE)
+myTargets = Biobase::read.AnnotatedDataFrame("./targets.csv", header = TRUE, row.names = 1, sep=";")
+
+rawData = oligo::read.celfiles(celFiles, phenoData = myTargets)
+
+colnames(rawData) = myTargets@data$ShortName
+```
+
+### 4.2. Control de qualitat de les dades crues
+
+Realitzem aquest pas perquè cal comprovar que les dades tingui prou qualitat per després poder realitzar la normalització, ja que si no tenen un mínim de qualitat ens generaran molt *soroll* que no podrem neutralitzar amb la normalització.
+
+Per això utilitzem el paquet *ArrayQualityMetrics* que ens realitza diferents proves per comprovar la qualitat. En cas que hi hagi una mostra que se'ns marqui com anòmala en 3 proves diferents, caldrà revisar-la i/o eliminar-la per poder millorar la qualitat en general.
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+library(arrayQualityMetrics)
+arrayQualityMetrics(rawData, outdir = "./Results/rawData_quality", force = T)
+```
+
+Un cop s'han realitzat les diferents proves de control, el programa ens retorna una taula resum. En les nostres dades veiem que no hi ha cap mostra que presenti una baixa qualitat. Per tant seguim amb l'anàlisis
+
+![Aspecte de la taula resum del control de qualitat](./results/index array.png)
+
+
+### 4.3. Normalització
+
+S'ha realitzat la normalització de les dades per fer que els arrays siguin comparables entre ells. D'aquesta manera s'intenta reduir, i si es pot eliminar, tot la variabilitat que no sigui deguda a raons biològiques, com podrien ser biaxos per problemes tècnics.
+
+En el nostre cas ho hem realitzat amb el següent paquet *oligo* i la funció rma:
+
+```{r}
+library(oligo)
+eset_rma = oligo::rma(rawData)
+
+```
+
+Podem veure que s'han realitzat els tres passos:
+
+- Correcció del background
+- Normalització
+- Resum (calculating Expression)
+
+### 4.4. Control de qualitat de les dades normalitzades
+
+Ara, un cop tenim les dades normalitzades tornem a realitzar un control de qualitat amb el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+arrayQualityMetrics(eset_rma, outdir = "./Results/rawData_quality_normal", force = T)
+
+```
+
+Com podem veure en la figura 2, els diferents arrays segueixen tenint una bona qualitat després d'haver normalitzat les dades
+
+![Aspecte de la taula resum del control de qualitat de les dades normalitzades](./results/index array normalitzat.png)
+
+
+### 4.5. Filtratge inespecífic de gens
+
+Realitem un filtratge de gens basant-nos en la seva variabilitat.Eliminarem aquells gens que la seva variació es pugui explicar per l'atzar. Per tant, són gens que no esperavem que s'expressecin diferencialment.
+
+Això ho realitzem per reduir les proves posteriors augmentant la potencia
+
+Hem seguit el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("org.Hs.eg.db")
+library(oligo)
+library(pd.hta.2.0)
+library(org.Hs.eg.db)
+library(hta20transcriptcluster.db)
+library(genefilter)
+library(DBI)
+annotation(eset_rma)="hta20transcriptcluster.db"
+filtered <- nsFilter(eset_rma, require.entrez=TRUE, remove.dupEntrez=TRUE, var.func=IQR, var.cutoff=0.5, var.filter=TRUE, filterByQuantile=TRUE, feature.exclude="^AFFX")
+
+eset_filtered <-filtered$eset
+```
+
+Després d'aquest filtratge ens quedem amb 11636 gens a la variable eset_filtered.
+
+
+### 4.6. Selecció de gens expressats diferencialment
+
+Utilitzarem el mètode de models lineals per els arrays que està implementat en el paquet limma. Per poder-lo uilitzar cal abans fer una sèrie de pasos.
+
+#### 4.6.1. Definició de la matriu de disseny
+
+Definim la matriu de disseny que es basa en una matriu on es descriu a quin grup partany cada mostra En el nostre cas la matriu tindrà 2 columnes (dos grups de Teixit) i 8 files (8 mostres d'arrays). Es col·loca un 1 en cada columna que pertanyi la mostra i un 0 si no i pertany.
+
+per facilitar aquesta feina, utilitzarem una de les columnes de l'arxiu *targets*, la columna **Teixit**. Per això utilitzarem el següent codi R i obtindrem aquesta matriu:
+
+```{r}
+matriudisseny<- model.matrix(~0+Teixit, pData(eset_filtered))
+colnames(matriudisseny) <- c("condyloma", "Pell")
+print(matriudisseny)
+```
+
+
+#### 4.6.1. Definició de la matriu de contrast
+
+Definim la matriu de contrast. Aquesta matriu s'utilitza per comparar els diferents grups. En el nostre estudi hi ha una sola comparació, l'expressió gènica dels queratòcits de pell normal amb els queratòcits de CA. Per tant tindrà una sola columna (comparació) i dues files (grups de comparació).
+
+```{r}
+cont.matrix = limma:: makeContrasts(effect_1 = condyloma-Pell, levels=matriudisseny)
+print(cont.matrix)
+
+```
+
+
+#### 4.6.2 Estimació del model
+
+Ara que ja tenim les diferents matrius definides, anem a estimar el model per poder realitzar a posteriori els contrastos. Aquests contrastos ens determinaran la significació de cada gen per decidir si es pot considerar expressat de forma diferenciada. Per això utilitzem el següent codi
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+require(limma)
+fit<-lmFit(eset_filtered, matriudisseny)
+fit.main<-contrasts.fit(fit, cont.matrix)
+fit.main<-eBayes(fit.main)
+```
+
+
+#### 4.6.3 Obtenció de la llista de gens diferencialment expressats
+
+Utilitzarem el paquet limma, ja que té una funció, topTable,que ens permet fer un contrast de la llista de gens ordenats amb el p-value de més petit a més gran.
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+seleccionats <- topTable (fit.main, number=nrow(fit.main), coef="effect_1", adjust="fdr")
+```
+
+A continuació podem veure una part de la taula que ens retorna el codi anterior
+```{r, echo=FALSE, eval=TRUE}
+head(seleccionats)
+```
+
+
+### 4.7 Annotació gènica
+En la taula anterior teniem la primera columna el ID que Affymetrix ha posat a cada gen, ara el què hem de fer és saber cada identificador a quin gen concret correspon.A més a més s'ha aprofitat per obtenir altres dades interessants dels gens com són el Símbol Gene, el Entrez Gene identifier o la descripció del gen.
+
+Per fer-ho es crea una funció amb el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+annotatedTopTable <- function(topTab, anotPackage){ 
+  topTab <- cbind(PROBEID=rownames(topTab), topTab)
+  myProbes <- rownames(topTab)
+  thePackage <- eval(parse(text = anotPackage))
+  geneAnots <- select(thePackage, myProbes, c("SYMBOL", "ENTREZID", "GENENAME"))
+  annotatedTopTab<- merge(x=geneAnots, y=topTab, by.x="PROBEID", by.y="PROBEID")
+  return(annotatedTopTab)
+}
+```
+
+Utilitzem aquesta funció amb la variable seleccionats i amb el paquet d'annotació "hta20transcriptcluster.db". El resultat obtingut és una taula amb aquest format:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+topAnnotated_seleccionats= annotatedTopTable(seleccionats, anotPackage = "hta20transcriptcluster.db" )
+```
+
+```{r, echo=FALSE, eval=TRUE}
+head(topAnnotated_seleccionats)
+```
+
+
+### 4.8 Significació biològica
+En aquest punt, s'intenta relacionar les dades obtingudes amb funcions i processos biològics. Així doncs, es realitza un comparativa per saber si hi ha alguna via metabòlica o algun procés biològic on hi hagi una acumulació de gens diferencialment expressats. Això, en el nostre estudi, ens pot començar a donar una idea de quines rutes afecta el VPH en els queratinòcits de CA.
+
+Per realitzar aquesta comparació primer hem de preparar les dades amb el següent codi. Veurem que el adj.P.Val l'augmentem a <0.15, ja que perquè aquest anàlisi tingui més potencia necessitem un mínim de gens a analitzar i per tant relaxem les condicions.
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+listOfTables <- list(Comparacio = seleccionats)
+listOfSelected <- list()
+for (i in 1:length(listOfTables)){
+  # seleccionem la toptable
+  topTab <- listOfTables[[i]]
+  # seleccionem els gens que inclourem a l'anàlisis
+  whichGenes<-topTab["adj.P.Val"]<0.15
+  selectedIDs <- rownames(topTab)[whichGenes]
+  # convertim la ID a Entrez
+  EntrezIDs<- select(hta20transcriptcluster.db, selectedIDs, c("ENTREZID"))
+  EntrezIDs <- EntrezIDs$ENTREZID
+  listOfSelected[[i]] <- EntrezIDs
+  names(listOfSelected)[i] <- names(listOfTables)[i]
+  }
+
+sapply(listOfSelected, length)
+
+
+mapped_genes2GO <- mappedkeys(org.Hs.egGO)
+mapped_genes2KEGG <- mappedkeys(org.Hs.egPATH)
+mapped_genes <- union(mapped_genes2GO , mapped_genes2KEGG)
+
+```
+
+L'analisis realitzat ens ha donat com a output 3 documents *(per veure el codi utilitzar anar a Annexos 7.11)*:
+- **.csv**: resum de totes les vies i rutes enriquides i les seves estadístiques
+- **PABarplot**: Gràfic de barres de les rutes més enriquides
+- **PAcnetplot**: Xarxa on veiem les vies enriquides connectades amb els gens expressats diferencialment que hi estan relacionats
+
+
+## 5. Resultats
+
+
+### 5.1 Comparació visual d'expressió gènica entre els dos grups
+
+Després de tot l'analisi realitzat, es procedeix a crear un gràfic tipus volcà per poder verure més fàcilment quins gens són els que presenten major diferència d'expressió entre els dos grups de queratinòcits.
+
+```{r, echo=FALSE, eval=TRUE, message= FALSE, warning=FALSE, error=FALSE}
+library(hta20transcriptcluster.db)
+
+geneSymbols <- select(hta20transcriptcluster.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=4, names=SYMBOLS,
+            main=paste("Expressió diferencial dels gens",
+            colnames(cont.matrix)[1], sep="\n"))
+abline(v=c(-1,1))
+
+```
+
+Observant el gràfic, veiemm que els gens que tenen una expressió més diferencial són el **FNDC1, NOVA1, IGFL1 i EPGN**
+
+
+### 5.2 Significança biològica
+
+Gràcies a l'anàlisis de la significança biològica hem pogut veure que diverses vies relacionades amb el control de la mitosis hi trobem gens amb l'expressió alterada. Això, en un inici, ja ens encaixa amb la descripció de la malaltia, ja que tal i com hem dit les berrugues del CA d'on hem extret les mostres, són proliferacions benignes. Per tant han de tenir alterada alguna via de la mitosis que provoqui aquest excés de divisió.
+
+![ ](./results/mitosis.png)
+
+A més a més podem veure alterats una sèrie de gens relacionats amb les fibres elàtiques, una de les encarregades de donar consistència elàstica a la pell.
+
+![ ](./results/Fibres elàstiques.png)
+
+## 6. Discusió
+
+Una de les posibles limitacions d'aquest estudi són les funcions, estrategies i models utilitzats, ja que segurament podem trobar al mercat eines més potents que ens puguin ajudar a anar un pas més enllà. Però aquest estudi és un pas previ per poder seguir investigant.
+
+## 7. Bibliografia
+
+1. Verrugas genitales o condilomas [Internet]. Fundació Puigvert. 2020 [cited 1 May 2020]. Available from: https://www.fundacio-puigvert.es/es/node/790
+
+2. Pérez V. Curso de Introducción a R [Internet]. Capítulo 7. RMarkdown. 2020 [cited 1 May 2020]. Available from: https://www.uv.es/vcoll/RMarkdown.html#partes-de-los-ficheros-.rmd
+
+## 8. Annexos
+
+A continuació trobarem tot el codi R utilitzat en aquest estudi, tant l'input com el output
+
+### 8.1 Preparació de dades
+
+```{r preparació dades, message= FALSE, warning=FALSE, error=FALSE}
+## Preparació dades per anàlisis
+
+#Marco quin vull que sigui el meu directori de treball
+setwd("C:/Users/laiag/Desktop/MASTER/Dades omiques/PEC1/PECdades")
+
+#Carrego la taula de targets que prèviament he creat amb un document Excel
+library(readr)
+targets = read_delim("./targets.csv",
+";", escape_double = FALSE, trim_ws = TRUE)
+```
+
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+# Lectura dels arxius CEL
+setwd("C:/Users/laiag/Desktop/MASTER/Dades omiques/PEC1/PECdades")
+library(oligo)
+library(Biobase)
+library(pd.hta.2.0)
+library(RSQLite)
+library(DBI)
+celFiles = list.celfiles("./data", full.names = TRUE)
+myTargets = read.AnnotatedDataFrame("./targets.csv", header = TRUE, row.names = 1, sep=";")
+
+rawData = oligo::read.celfiles(celFiles, phenoData = myTargets)
+
+print(pData(rawData))
+
+colnames(rawData)
+
+colnames(rawData) = myTargets@data$ShortName
+
+```
+
+## 8.2 Control de qualitat de les dades sense processar
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+library(arrayQualityMetrics)
+arrayQualityMetrics(rawData, outdir = "./Results/rawData_quality", force = T)
+```
+
+
+
+## 8.3 Normalizació
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+#Utilitzem la funció rma que ens retornarà la normalització.
+library(oligo)
+eset_rma = oligo::rma(rawData)
+
+```
+
+## 8.4 Control de qualitat en les dades normalitzades
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+
+boxplot(eset_rma, cex.axis=0.5, las=2, which="all",
+col = c(rep("gold", 3), rep("hot pink", 3), rep("purple", 3),
+rep("cyan", 3)),
+main="Intensitat dels arrays: Dades normalitzades")
+
+#arrayQualityMetrics(rawData, outdir = "./Results/rawData_quality_normal", force = T)
+
+```
+
+## 8.5 Filtratge no especific
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("org.Hs.eg.db")
+library(oligo)
+library(pd.hta.2.0)
+library(org.Hs.eg.db)
+library(hta20transcriptcluster.db)
+library(genefilter)
+library(DBI)
+annotation(eset_rma)="hta20transcriptcluster.db"
+filtered <- nsFilter(eset_rma, require.entrez=TRUE, remove.dupEntrez=TRUE, var.func=IQR, var.cutoff=0.5, var.filter=TRUE, filterByQuantile=TRUE, feature.exclude="^AFFX")
+
+print(filtered$filter.log)
+
+eset_filtered <-filtered$eset
+```
+
+
+## 8.6 Creació matriu disseny
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+matriudisseny<- model.matrix(~0+Teixit, pData(eset_filtered))
+colnames(matriudisseny) <- c("condyloma", "Pell")
+print(matriudisseny)
+
+```
+
+
+
+## 8.7 Creació matriu contrast
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+library(limma)
+cont.matrix = makeContrasts (effect_1 = condyloma-Pell, levels=matriudisseny)
+print(cont.matrix)
+
+```
+
+## 8.8 Llistat gens
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+require(limma)
+fit<-lmFit(eset_filtered, matriudisseny)
+fit.main<-contrasts.fit(fit, cont.matrix)
+fit.main<-eBayes(fit.main)
+save(fit.main, file="celltypes-fit.main.Rda")
+
+seleccionats <- topTable (fit.main, number=nrow(fit.main), coef="effect_1", adjust="fdr")
+
+
+coefnum = 1
+opt <- par(cex.lab = 0.7)
+volcanoplot(fit.main, coef=coefnum, highlight=10, names=fit.main$ID,
+ main=paste("Differentially expressed genes",
+ colnames(cont.matrix)[coefnum], sep="\n"))
+abline(v=c(-1,1))
+par(opt)
+
+```
+
+## 8.9 Anotacions
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+annotatedTopTable <- function(topTab, anotPackage){ 
+  topTab <- cbind(PROBEID=rownames(topTab), topTab)
+  myProbes <- rownames(topTab)
+  thePackage <- eval(parse(text = anotPackage))
+  geneAnots <- select(thePackage, myProbes, c("SYMBOL", "ENTREZID", "GENENAME"))
+  annotatedTopTab<- merge(x=geneAnots, y=topTab, by.x="PROBEID", by.y="PROBEID")
+  return(annotatedTopTab)
+}
+
+topAnnotated_seleccionats= annotatedTopTable(seleccionats, anotPackage = "hta20transcriptcluster.db" )
+
+head(topAnnotated_seleccionats)
+
+```
+
+## 8.10 Gràfic volcà
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+library(hta20transcriptcluster.db)
+
+geneSymbols <- select(hta20transcriptcluster.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=4, names=SYMBOLS,
+            main=paste("Expressió diferencial dels gens",
+            colnames(cont.matrix)[1], sep="\n"))
+abline(v=c(-1,1))
+
+```
+
+
+
+## 8.11 Significació biològica
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+listOfTables <- list(Comparacio = seleccionats)
+listOfSelected <- list()
+for (i in 1:length(listOfTables)){
+  # seleccionem la toptable
+  topTab <- listOfTables[[i]]
+  # seleccionem els gens que inclourem a l'anàlisis
+  whichGenes<-topTab["adj.P.Val"]<0.15
+  selectedIDs <- rownames(topTab)[whichGenes]
+  # convertim la ID a Entrez
+  EntrezIDs<- select(hta20transcriptcluster.db, selectedIDs, c("ENTREZID"))
+  EntrezIDs <- EntrezIDs$ENTREZID
+  listOfSelected[[i]] <- EntrezIDs
+  names(listOfSelected)[i] <- names(listOfTables)[i]
+  }
+
+sapply(listOfSelected, length)
+
+
+mapped_genes2GO <- mappedkeys(org.Hs.egGO)
+mapped_genes2KEGG <- mappedkeys(org.Hs.egPATH)
+mapped_genes <- union(mapped_genes2GO , mapped_genes2KEGG)
+
+```
+
+```{r, message= FALSE, warning=FALSE, error=FALSE}
+library(ReactomePA)
+
+listOfData <- listOfSelected[1:1]
+comparisonsNames <- names(listOfData)
+universe <- mapped_genes
+
+for (i in 1:length(listOfData)){
+  genesIn <- listOfData[[i]]
+  comparison <- comparisonsNames[i]
+  enrich.result <- enrichPathway(gene = genesIn,
+                                 pvalueCutoff = 0.05,
+                                 readable = T,
+                                 pAdjustMethod = "BH",
+                                 organism = "human",
+                                 universe = universe)
+  
+     cat("##################################")
+     cat("\nComparison: ", comparison,"\n")
+     print(head(enrich.result))
+     
+       write.csv(as.data.frame(enrich.result), 
+      file =paste0("./results/","ReactomePA.Results.",comparison,".csv"), 
+      row.names = FALSE)
+   
+          pdf(file=paste0("./results/","ReactomePABarplot.",comparison,".pdf"))
+      print(barplot(enrich.result, showCategory = 15, font.size = 4, 
+     title = paste0("Reactome Pathway Analysis for ", comparison,". Barplot")))
+      dev.off()
+   
+   pdf(file = paste0("./results/","ReactomePAcnetplot.",comparison,".pdf"))
+     print(cnetplot(enrich.result, categorySize = "geneNum", schowCategory = 15, 
+                    vertex.label.cex = 0.75))
+   dev.off()
+
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
